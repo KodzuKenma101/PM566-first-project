@@ -112,7 +112,6 @@ met1[, euc := sqrt(
 )]
 
 staterep <- met1[order(euc, lat), .SD[1], by = STATE]
-staterep$datanum <- 1
 staterep[order(STATE)]
 ```
 
@@ -152,27 +151,10 @@ met2[, euc2 := sqrt(
 )]
 
 centerstation <- met2[order(euc2), .SD[1], by = STATE]
-centerstation$datanum <- 2
 centerstation[order(STATE)]
-mapdata <- merge(staterep, centerstation, by = "datanum", all = TRUE)
-mapdata
 
 
 library(leaflet)
-mapdata <- mapdata[!is.na("lat") & !is.na("lon")]
-station.pal <- colorNumeric(c('purple', 'yellow'), domain= mapdata$datanum)
-station.pal
-stationmap <-leaflet(met2) |>
-  addProviderTiles('CartoDB.Positron') |>
-  addCircles(
-    lat = ~lat, lng = ~lon,
-    color = ~station.pal(mapdata$datanum),
-    opacity = 1, fillOpacity = 1, radius = 500
-  ) |>
-  addLegend('bottomleft', pal=station.pal, values = mapdata$datanum,
-            title = 'Monitoring Stations', opacity = 1) 
-  
-stationmap
 
 ```
 
