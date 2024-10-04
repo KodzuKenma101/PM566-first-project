@@ -1,0 +1,179 @@
+---
+title: "lab-05"
+author: "Ellya Gholmieh"
+format: html
+editor: visual
+embed-resources: true
+theme: hpstr
+---
+
+## 1. Read in the Data
+
+```{r}
+
+library(data.table)
+library(dtplyr)
+library(dplyr)
+
+met <- data.table::fread("C:/Users/ellya/OneDrive/Desktop/PM566labs/met_all.gz")
+
+stations <- data.table::fread("https://noaa-isd-pds.s3.amazonaws.com/isd-history.csv")
+```
+
+## 2. Setup the Data
+
+```{r}
+
+stations[, USAF := as.integer(USAF)]
+stations[, USAF := fifelse(USAF == 999999, NA_integer_, USAF)]
+stations[, CTRY := fifelse(CTRY == "", NA_character_, CTRY)]
+stations[, STATE := fifelse(STATE == "", NA_character_, STATE)]
+
+stations <- unique(stations[, list(USAF, CTRY, STATE)])
+
+stations <- stations[!is.na(USAF)]
+
+stations[, n := 1:.N, by = .(USAF)]
+stations <- stations[n == 1,][, n := NULL]
+
+met <- met[, c('USAFID', 'WBAN', 'year', 'month', 'day', 'hour', 'min', 'lat', 'lon', 'elev', 'wind.sp', 'temp', 'atm.press')] 
+
+met <- merge(
+  x = met,
+  y = stations,
+  by.x = "USAFID",
+  by.y = "USAF",
+  all.x = TRUE,
+  all.y = FALSE
+) 
+
+nrow(met)
+head(met[, c('USAFID', 'WBAN', 'STATE')], n = 4)
+```
+
+## Question 1: Representative Station for the US
+
+### What is the median station in terms of temperature, wind speed, and atmospheric pressure?
+
+```{r}
+#National Median Values
+quantile(met$temp, na.rm = TRUE)
+# median temp = 23.5
+quantile(met$wind.sp, na.rm = TRUE)
+# median wind speed = 2.1
+quantile(met$atm.press, na.rm = TRUE)
+# median atmospheric pressure = 1014.1
+
+
+med_met <- met[,.(
+  temp_med = median(temp, na.rm = TRUE),
+  wind.sp_med = median(wind.sp, na.rm = TRUE),
+  atm.press_med = median(atm.press, na.rm = TRUE)
+), by = USAFID]
+
+coincide <- med_met[temp_med == 23.5 & wind.sp_med == 2.1 & atm.press_med == 1014.1]
+coincide
+
+mtempstation <- med_met[which.min(abs(med_met$temp_med - 23.5))]
+mtempstation
+mwindstation <- med_met[which.min(abs(med_met$wind.sp_med - 2.1))]
+mwindstation
+matmstation <- med_met[which.min(abs(med_met$atm.press_med - 1014.1))]
+matmstation
+```
+
+The station that represents the national median temperature is station 720501, the national median wind speed is station 720110, and the national median atmospheric pressure is station 722420. None of these stations overlap.
+
+## Question 2: Representative Station Per State
+
+Identify the most representative, the median, station per state using the euclidean distance. If multiple stations show in the median, select the one located at the lowest latitude.
+
+```{r}
+
+state_met1 <- met[,.(
+  temp_med = median(temp, na.rm = TRUE),
+  wind.sp_med = median(wind.sp, na.rm = TRUE),
+  atm.press_med = median(atm.press, na.rm = TRUE)
+), by = STATE]
+
+met1 <- merge(
+  x = met,
+  y = state_met1,
+  by.x = "STATE",
+  by.y = "STATE",
+  all.x = TRUE,
+  all.y = FALSE
+) 
+
+met1[, euc := sqrt(
+  (temp - temp_med)^2 +
+  (wind.sp - wind.sp_med)^2 +
+  (atm.press - atm.press_med)^2
+)]
+
+staterep <- met1[order(euc, lat), .SD[1], by = STATE]
+staterep$datanum <- 1
+staterep[order(STATE)]
+```
+
+## 3. In the Middle?
+
+Identify what is the station that is closest to the mid-point of the state. Combining these with the stations you identified in the previous question, use `leaflet()` to visualize all \~100 points in the same figure, applying different colors for those identified in this question.
+
+```{r}
+
+statecenters <- data.frame(
+  longitude = state.center[1],
+  latitude = state.center[2],
+  STATE = state.abb,
+  stringsAsFactors = FALSE
+)
+
+statecenters[statecenters$state == "AK", c("x", "y")] <- c(-152.00, 63.83)
+statecenters[statecenters$state == "HI", c("x", "y")] <- c(-156.33, 20.25)
+
+statecenters <- statecenters %>%
+  rename(
+    longitude = x,
+    latitude = y)
+
+met2 <- merge(
+  x = met1,
+  y = statecenters,
+  by.x = "STATE",
+  by.y = "STATE",
+  all.x = TRUE,
+  all.y = FALSE
+) 
+
+met2[, euc2 := sqrt(
+  (lat - latitude)^2 +
+  (lon - longitude)^2 
+)]
+
+centerstation <- met2[order(euc2), .SD[1], by = STATE]
+centerstation$datanum <- 2
+centerstation[order(STATE)]
+mapdata <- merge(staterep, centerstation, by = "datanum", all = TRUE)
+mapdata
+
+
+library(leaflet)
+mapdata <- mapdata[!is.na("lat") & !is.na("lon")]
+station.pal <- colorNumeric(c('purple', 'yellow'), domain= mapdata$datanum)
+station.pal
+stationmap <-leaflet(met2) |>
+  addProviderTiles('CartoDB.Positron') |>
+  addCircles(
+    lat = ~lat, lng = ~lon,
+    color = ~station.pal(mapdata$datanum),
+    opacity = 1, fillOpacity = 1, radius = 500
+  ) |>
+  addLegend('bottomleft', pal=station.pal, values = mapdata$datanum,
+            title = 'Monitoring Stations', opacity = 1) 
+  
+stationmap
+
+```
+
+## 4. **Means of means**
